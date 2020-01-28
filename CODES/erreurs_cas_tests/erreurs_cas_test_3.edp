@@ -1,0 +1,184 @@
+//------------------------------------------------------------------------------
+// PROBLEME DE L'ELASTICITE LINEAIRE
+//------------------------------------------------------------------------------
+
+load "msh3"
+load "medit"
+
+// ----------------- ECRITURE DANS LES FICHIERS --------------------------------
+
+ofstream tfile("cas_test3.txt");
+
+tfile << "Probleme Elasticite Lineaire" << endl;
+
+//------------------------------------------------------------------------------
+
+
+// ----------------- PARAMETRES DU PROLEME -------------------------------------
+
+int L = 1;                     	//Longueur du rectangle de base
+int l = 1;                      	//Largeur du rectangle de base
+real young = 2.38;              	//Module de Young pour du plexiglas
+real poisson = 0.415;          		//Coefficient de Poisson du plexiglas
+real sqrt2 = sqrt(2.);
+real coeff = 0.0001;
+real normeL2;
+real erreurdep, erreurdef, erreurcont, erreurVM;
+
+//Coefficients de Lamé
+real lambda = (young*poisson)/((1+poisson)*(1-2*poisson));
+real mu = young/(2*(1+poisson));
+
+//------------------------------------------------------------------------------
+
+// ----------------- 2D DOMAINE RECTANGLE --------------------------------------
+border Gamma1(t=0, L){x=t; y=0;label=1;};
+border Gamma2(t=0, l){x=L; y=t;label=2;};
+border Gamma3(t=0, L){x=L-t; y=l;label=3;};
+border Gamma4(t=0, l){x=0; y=l-t;label=4;};
+
+//Labels pour 3D Mesh
+int[int] rup = [0,15];
+int[int] rdown = [0,15];
+int[int] rmid = [1,15,2,15,3,15,4,15];
+
+//------------------------------------------------------------------------------
+
+//------------------------------------------------------------------------------
+
+// ----------------- BOUCLE SUR FINESSE DU MAILLAGE-----------------------------
+for (int k=1;k<9;++k)
+  {
+    //Création du maillage 2D
+    int nbr = 5+2*k;
+    mesh Th2 = buildmesh(Gamma1(nbr) + Gamma2(nbr) + Gamma3(nbr) + Gamma4(nbr));
+    //plot(Th2);
+  //----------------------------------------------------------------------------
+  //---------------- 3D MESH RECTANGLE -----------------------------------------
+    mesh3 Th = buildlayers(Th2, nbr, zbound = [0,l], labelmid = rmid,
+      labelup = rup, labeldown = rdown);
+    //plot(Th);
+    //medit("Th",Th);
+  //----------------------------------------------------------------------------
+
+
+  //---------------- FORMULATION VARIATIONNELLE --------------------------------
+    //Espace d'approximation et utilisation des éléments Pk
+    fespace Vh(Th,[P1,P1,P1]);
+    fespace Wh(Th,P1);
+
+    //Création des 2 fonctions appartenant à Vh
+    Vh [uh1,uh2,uh3] , [vh1,vh2,vh3];
+
+    //Quelques fonctions utiles pour les calculs de la FV.
+    macro epsilonprod(u1,u2,u3) [dx(u1) , dy(u2) , dz(u3) , (dx(u2) + dy(u1))/sqrt2,
+    (dx(u3) + dz(u1))/sqrt2 , (dy(u3) + dz(u2))/sqrt2]  //End of macro
+
+    macro div(u1,u2,u3) (dx(u1) + dy(u2) + dz(u3)) //End of macro
+
+    //CAS TEST1
+    func f1 = -y*(y-l)*(2*x-L)*(2*z-l)*(lambda+mu);
+    func f2 = -x*(x-L)*(2*y-l)*(2*z-l)*(lambda+mu);
+    func f3 = -((4*mu + 2*lambda)*(x*(x-L)*y*(y-l)) + 2*mu*z*(z-l)*(y*(y-l)+x*(x-L)));
+
+
+    //Formulation variationnelle pour le solveur Gradient Conjugué
+    problem elasticite([uh1,uh2,uh3],[vh1,vh2,vh3], solver=CG) =
+      int3d(Th)(2*mu*epsilonprod(vh1,vh2,vh3)'*epsilonprod(uh1,uh2,uh3)
+      + lambda*div(uh1,uh2,uh3)*div(vh1,vh2,vh3))
+      - int3d(Th)(f1*vh1 + f2*vh2 + f3*vh3)
+      + on(15,uh1 = 0, uh2 = 0, uh3 = 0);
+
+  //----------------------------------------------------------------------------
+    elasticite;
+  //---------------- AFFICHAGE DES RESULTATS -----------------------------------
+    //plot(u1,u2,u3);
+    //mesh3 Trans = movemesh(Th, [x+u1*coeff, y+u2*coeff, z+u3*coeff]);
+    //plot(Trans);
+    //medit("Trans",Trans);
+  //----------------------------------------------------------------------------
+
+  //----------------- COMPARAISON AVEC SOLUTIONS EXACTES -----------------------
+  // Solution exacte projetée dans Vh
+    Wh u1,u2,u3;
+    u1 = 0;
+    u2 = 0;
+    u3 = x*y*z*(x-L)*(y-l)*(z-l);
+
+  //---------------- ERREUR SUR DEFORMATIONS -----------------------------------
+    Wh erreureps;
+
+    erreureps = sqrt(  pow(dx(uh1) - dx(u1),2)
+                  + pow( 0.5*(dy(uh1) + dx(uh2) - dy(u1) - dx(u2)),2)
+                  + pow( 0.5*(dz(uh1) + dx(uh3) - dz(u1) - dx(u3)),2)
+                  + pow( 0.5*(dy(uh1) + dx(uh2) - dy(u1) - dx(u2)),2)
+                  + pow( dy(uh2) - dy(u2),2)
+                  + pow( 0.5*(dz(uh2) + dy(uh3) - dz(u2)- dy(u3)),2)
+                  + pow( 0.5*(dz(uh1) + dx(uh3) - dz(u1) - dx(u3)),2)
+                  + pow( 0.5*(dz(uh2) + dy(uh3) - dz(u2)- dy(u3)),2)
+                  + pow( dz(uh3) - dz(u3),2) );
+
+    //plot(erreureps)
+
+  //---------------- ERREUR SUR LA CONTRAINTE ----------------------------------
+    Wh sh1,sh2,sh3,sh12,sh13,sh23;
+
+    sh1 = 2*mu*(dx(uh1)) + lambda*div(uh1,uh2,uh3);
+    sh2 = 2*mu*(dy(uh2)) + lambda*div(uh1,uh2,uh3);
+    sh3 = 2*mu*(dz(uh3)) + lambda*div(uh1,uh2,uh3);
+    sh12 = 2*mu*(0.5*(dy(uh1) + dx(uh2)));
+    sh13 = 2*mu*(0.5*(dz(uh1) + dx(uh3)));
+    sh23 = 2*mu*(0.5*(dz(uh2) + dy(uh3)));
+
+    Wh s1,s2,s3,s12,s13,s23;
+
+    s1 = 2*mu*(dx(u1)) + lambda*div(u1,u2,u3);
+    s2 = 2*mu*(dy(u2)) + lambda*div(u1,u2,u3);
+    s3 = 2*mu*(dz(u3)) + lambda*div(u1,u2,u3);
+    s12 = 2*mu*(0.5*(dy(u1) + dx(u2)));
+    s13 = 2*mu*(0.5*(dz(u1) + dx(u3)));
+    s23 = 2*mu*(0.5*(dz(u2) + dy(u3)));
+
+    Wh erreursig;
+
+    erreursig = sqrt( pow(sh1 - s1,2)
+                  +   pow(sh12 - s12,2)
+                  +   pow(sh13 - s13,2)
+                  +   pow(sh12 - s12,2)
+                  +   pow(sh2 - s2,2)
+                  +   pow(sh23 - s23,2)
+                  +   pow(sh13 - s13,2)
+                  +   pow(sh23 - s23,2)
+                  +   pow(sh3 - s3,2) );
+
+    //plot(erreursig);
+
+  //---------------- ERREUR SUR LA CONTRAINTE DE VON MISES ---------------------
+
+  Wh VonMisesapp, VonMisesex;
+
+  VonMisesapp = (1./sqrt2)*( pow(sh1 - sh2,2) + pow(sh2 - sh3,2) + pow(sh3 - sh1,2)
+                    + 6*(pow(sh12,2) + pow(sh13,2) + pow(sh23,2) ));
+
+
+  VonMisesex = (1./sqrt2)*( pow(s1 - s2,2) + pow(s2 - s3,2) + pow(s3 - s1,2)
+                    + 6*(pow(s12,2) + pow(s13,2) + pow(s23,2) ));
+
+  //---------------- INTEGRATION DES ERREURS -----------------------------------
+
+    normeL2 = sqrt(int3d(Th)(pow(u1,2) + pow(u2,2) + pow(u3,2)));
+
+    erreurdep = sqrt(int3d(Th)(pow(uh1-u1,2)+pow(uh2-u2,2)+pow(uh3-u3,2)));
+
+    erreurdef = int3d(Th)(erreureps);
+
+    erreurcont = int3d(Th)(erreursig);
+
+    erreurVM = sqrt(int3d(Th)(pow(VonMisesapp - VonMisesex , 2)));
+
+    tfile << 1./nbr << "  " << erreurdep << "  " << erreurdef << "  " << erreurcont << "  " << erreurVM << endl;
+
+  }
+  //----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------

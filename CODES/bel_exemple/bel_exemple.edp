@@ -1,0 +1,101 @@
+//------------------------------------------------------------------------------
+// PROBLEME DE L'ELASTICITE LINEAIRE
+//------------------------------------------------------------------------------
+
+load "msh3"
+load "medit"
+
+//------------------------------------------------------------------------------
+
+
+// ----------------- PARAMETRES DU PROLEME -------------------------------------
+
+int L = 10;                     	//Longueur du rectangle de base
+int l = 2;                      	//Largeur du rectangle de base
+real young = 2.38;              	//Module de Young pour du plexiglas
+real poisson = 0.415;          		//Coefficient de Poisson du plexiglas
+real sqrt2 = sqrt(2.);
+real coeff = 0.003;
+
+//Coefficients de Lamé
+real lambda = (young*poisson)/((1+poisson)*(1-2*poisson));
+real mu = young/(2*(1+poisson));
+
+
+//------------------------------------------------------------------------------
+
+// ----------------- 2D DOMAINE RECTANGLE --------------------------------------
+
+border Gamma1(t=0, L){x=t; y=0;label=1;};
+border Gamma2(t=0, l){x=L; y=t;label=2;};
+border Gamma3(t=0, L){x=L-t; y=l;label=3;};
+border Gamma4(t=0, l){x=0; y=l-t;label=4;};
+
+//Labels pour 3D Mesh
+int[int] rup = [0,15];
+int[int] rdown = [0,15];
+int[int] rmid = [1,15,2,100,3,15,4,15];
+
+int nbr = 20;
+mesh Th2 = buildmesh(Gamma1(nbr) + Gamma2(nbr) + Gamma3(nbr) + Gamma4(nbr));
+//plot(Th2);
+
+mesh3 Th = buildlayers(Th2, nbr, zbound = [0,l], labelmid = rmid,
+  labelup = rup, labeldown = rdown);
+//plot(Th);
+medit("Th",Th);
+
+//----------------------------------------------------------------------------
+
+//---------------- FORMULATION VARIATIONNELLE --------------------------------
+
+
+//Espace d'approximation et utilisation des éléments Pk
+fespace Vh(Th,[P1,P1,P1]);
+
+//Création des 2 fonctions appartenant à Vh
+Vh [u1,u2,u3] , [v1,v2,v3] ;
+
+//Les 3 fonctions de second membre (forces respectives aux 3 dimensions)
+func f1 = 0;
+func f2 = 0;
+func f3 = -1;
+
+//Quelques fonctions utiles pour les calculs de la FV
+macro epsilonprod(u1,u2,u3) [dx(u1) , dy(u2) , dz(u3) , (dx(u2) + dy(u1))/sqrt2,
+(dx(u3) + dz(u1))/sqrt2 , (dy(u3) + dz(u2))/sqrt2]  //End of macro
+
+macro div(u1,u2,u3) (dx(u1) + dy(u2) + dz(u3)) //End of macro
+
+
+//Formulation variationnelle pour le solveur Gradient Conjugué
+problem elasticiteCG([u1,u2,u3],[v1,v2,v3], solver=CG) =
+  int3d(Th)(2*mu*epsilonprod(v1,v2,v3)'*epsilonprod(u1,u2,u3)
+  + lambda*div(u1,u2,u3)*div(v1,v2,v3))
+  - int3d(Th)(f1*v1 + f2*v2 + f3*v3)
+  + on(100,u1 = 0, u2 = 0, u3 = 0);
+
+  elasticiteCG;
+
+
+plot(u1,u2,u3);
+mesh3 Trans = movemesh(Th, [x+u1*coeff, y+u2*coeff, z+u3*coeff]);
+//plot(Trans);
+medit("Trans",Trans);
+
+fespace Wh(Th,P1);
+Wh s1,s2,s3,s12,s13,s23;
+
+    s1 = 2*mu*(dx(u1)) + lambda*div(u1,u2,u3);
+    s2 = 2*mu*(dy(u2)) + lambda*div(u1,u2,u3);
+    s3 = 2*mu*(dz(u3)) + lambda*div(u1,u2,u3);
+    s12 = 2*mu*(0.5*(dy(u1) + dx(u2)));
+    s13 = 2*mu*(0.5*(dz(u1) + dx(u3)));
+    s23 = 2*mu*(0.5*(dz(u2) + dy(u3)));
+
+Wh VonMises;
+
+  VonMises = (1./sqrt2)*( pow(s1 - s2,2) + pow(s2 - s3,2) + pow(s3 - s1,2)
+                    + 6*(pow(s12,2) + pow(s13,2) + pow(s23,2) ));
+
+plot(VonMises);

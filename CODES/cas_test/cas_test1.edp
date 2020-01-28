@@ -1,0 +1,145 @@
+//------------------------------------------------------------------------------
+// PROBLEME DE L'ELASTICITE LINEAIRE
+//------------------------------------------------------------------------------
+
+load "msh3"
+load "medit"
+
+// ----------------- ECRITURE DANS LES FICHIERS --------------------------------
+
+ofstream tfile("cas_test1.txt");
+
+tfile << "Probleme Elasticite Lineaire" << endl;
+
+//------------------------------------------------------------------------------
+
+
+// ----------------- PARAMETRES DU PROLEME -------------------------------------
+
+int L = 1;                     	//Longueur du rectangle de base
+int l = 1;                      	//Largeur du rectangle de base
+real young = 2.38;              	//Module de Young pour du plexiglas
+real poisson = 0.415;          		//Coefficient de Poisson du plexiglas
+real sqrt2 = sqrt(2.);
+real coeff = 0.0001;
+real normeL2;
+real errL2UMFPACK , errL2CG, errL2GMRES;
+
+//Coefficients de Lamé
+real lambda = (young*poisson)/((1+poisson)*(1-2*poisson));
+real mu = young/(2*(1+poisson));
+
+
+//------------------------------------------------------------------------------
+
+// ----------------- 2D DOMAINE RECTANGLE --------------------------------------
+
+border Gamma1(t=0, L){x=t; y=0;label=1;};
+border Gamma2(t=0, l){x=L; y=t;label=2;};
+border Gamma3(t=0, L){x=L-t; y=l;label=3;};
+border Gamma4(t=0, l){x=0; y=l-t;label=4;};
+
+//Labels pour 3D Mesh
+int[int] rup = [0,15];
+int[int] rdown = [0,15];
+int[int] rmid = [1,15,2,15,3,15,4,15];
+
+//------------------------------------------------------------------------------
+
+//---------------- CREATION DES MATRICES DEFORMATION ET CONTRAINTES ------------
+
+macro matrix A(u1,u2,u3) [[dx(u1), 0.5*(dy(u1) + dx(u2)), 0.5*(dz(u1)+dx(u3))],
+                          [0.5*(dy(u1) + dx(u2)), dy(u2), 0.5*(dz(u2)+dy(u3))],
+                          [0.5*(dz(u1)+dx(u3)), 0.5*(dz(u2)+dy(u3)), dz(u3)]] //End of macro
+
+
+//------------------------------------------------------------------------------
+
+// ----------------- BOUCLE SUR FINESSE DU MAILLAGE-----------------------------
+
+for (int k=1;k<18;++k)
+  {
+
+    //Création du maillage 2D
+    int nbr = 5+k;
+    mesh Th2 = buildmesh(Gamma1(nbr) + Gamma2(nbr) + Gamma3(nbr) + Gamma4(nbr));
+    //plot(Th2);
+
+  //----------------------------------------------------------------------------
+
+  //---------------- 3D MESH RECTANGLE -----------------------------------------
+
+    mesh3 Th = buildlayers(Th2, nbr, zbound = [0,l], labelmid = rmid,
+      labelup = rup, labeldown = rdown);
+    //plot(Th);
+    //medit("Th",Th);
+
+  //----------------------------------------------------------------------------
+
+  //---------------- FORMULATION VARIATIONNELLE --------------------------------
+
+
+    //Espace d'approximation et utilisation des éléments Pk
+    fespace Vh(Th,P2);
+
+    //Création des 2 fonctions appartenant à Vh
+    Vh u1,u2,u3,v1,v2,v3;
+
+    //Les 3 fonctions de second membre (forces respectives aux 3 dimensions)
+    func f1 = -((4*mu + 2*lambda)*(z*(z-l)*y*(y-l)) + 2*mu*x*(x-L)*(y*(y-l)+z*(z-l)));
+    func f2 = -z*(z-l)*(2*y-l)*(2*x-L)*(lambda+mu);
+    func f3 = -y*(y-l)*(2*x-L)*(2*z-l)*(lambda+mu);
+
+    //Quelques fonctions utiles pour les calculs de la FV
+    macro epsilonprod(u1,u2,u3) [dx(u1) , dy(u2) , dz(u3) , (dx(u2) + dy(u1))/sqrt2,
+    (dx(u3) + dz(u1))/sqrt2 , (dy(u3) + dz(u2))/sqrt2]  //End of macro
+
+    macro div(u1,u2,u3) (dx(u1) + dy(u2) + dz(u3)) //End of macro
+
+
+
+    //Formulation variationnelle pour le solveur Gradient Conjugué
+    problem elasticiteCG([u1,u2,u3],[v1,v2,v3], solver=CG) =
+      int3d(Th)(2*mu*epsilonprod(v1,v2,v3)'*epsilonprod(u1,u2,u3)
+      + lambda*div(u1,u2,u3)*div(v1,v2,v3))
+      - int3d(Th)(f1*v1 + f2*v2 + f3*v3)
+      + on(15,u1=0,u2=0,u3=0);
+      // -int2d()
+
+
+    // Résolution du système linéaire;
+    real t1 = clock(); // Pour mesure du temps cpu
+    elasticiteCG;
+    real t2 = clock(); // Pour mesure du temps cpu
+
+  //----------------------------------------------------------------------------
+
+  //---------------- AFFICHAGE DES RESULTATS -----------------------------------
+
+    //plot(u1,u2,u3);
+    //mesh3 Trans = movemesh(Th, [x+u1*coeff, y+u2*coeff, z+u3*coeff]);
+    //plot(Trans);
+    //medit("Trans",Trans);
+
+  //----------------------------------------------------------------------------
+
+  //----------------- COMPARAISON AVEC SOLUTIONS EXACTES -----------------------
+
+  // Solution exacte projetée dans Vh
+    Vh ue1,ue2,ue3;
+    ue1 = x*y*z*(x-L)*(y-l)*(z-l);
+    ue2 = 0;
+    ue3 = 0;
+
+  // Calcul des erreurs
+
+    normeL2 = sqrt(int3d(Th)((ue1)^2 + (ue2)^2 + (ue3)^2));
+
+    errL2CG = sqrt(int3d(Th)((u1-ue1)^2+(u2-ue2)^2+(u3-ue3)^2));
+
+    tfile << 1./nbr << "  " << errL2CG/normeL2 << "  " << t2-t1  << endl;
+
+  }
+  //----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
